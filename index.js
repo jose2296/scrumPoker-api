@@ -267,4 +267,4 @@ io.on('connection', socket => {
 
 });
 
-io.listen(8080, { origins: '*:*'});
+io.listen(process.env.PORT || 8080, { origins: '*:*'});
