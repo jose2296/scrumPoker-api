@@ -1,41 +1,6 @@
-// const WebSocket = require('ws');
-
-// const wss = new WebSocket.Server({ port: 8888 });
-
-// wss.on('connection', (ws) => {
-//     console.log('New connection');
-//     // ws.send('something');
-
-
-//     ws.on('message', data => {
-//         console.log(data);
-//     });
-
-
-//     ws.on('close', (e) => {
-//         console.log('Connection close', e);
-//     });
-// });
-
-
-// const server = require('http').createServer();
-// const io = require('socket.io')(server);
-
-// io.on('connection', client => {
-
-//     console.log('Connection');
-
-//     client.on('event', data => {
-//         console.log(data);
-//     });
-//     client.on('disconnect', () => {
-//         console.log('Disconnect');
-//     });
-// });
-// server.listen(8888);
 
 const io = require('socket.io')();
-
+const firebase = require('firebase');
 const usersByRoom = {}
 
 const updateCount = roomName => {
@@ -45,30 +10,59 @@ const updateCount = roomName => {
     // if (userCount === usersByRoom[roomName]) { return }
     // usersByRoom[roomName] = userCount
     // io.emit('updateCount', { roomName, userCount })
-  }
+}
+
+
+
+
+// Set the configuration for your app
+// TODO: Replace with your project's config object
+var config = {
+    apiKey: "AIzaSyA6rpojdB5jcb0-48nO6qCFOmJ1Om_qadk",
+    authDomain: "scrumpoker-22.firebaseapp.com",
+    databaseURL: "https://scrumpoker-22.firebaseio.com/",
+    // storageBucket: "bucket.appspot.com"
+};
+firebase.initializeApp(config);
+// Get a reference to the database service
+var database = firebase.database();
+
+// database.ref('/').once('value').then(data => {
+//     // rooms = data.val();
+//     console.log(data.val());
+// })
+//  .on('value', (data) => {
+//     console.log(data.val());
+// })
+
+
 
 
 const initRoomData = {
     users: [],
     userAdmin: null,
-    isVoting: false,
     userVotes: {}
 };
 
-let rooms = [
-    {
+let rooms = {
+    platform: {
+        id: 'platform',
         name: 'Platform',
         ...initRoomData
     },
-    {
+    api: {
+        id: 'api',
         name: 'Api',
         ...initRoomData
     },
-    {
+    layout: {
+        id: 'layout',
         name: 'Layout',
         ...initRoomData
     }
-];
+};
+
+// database.ref('/rooms').set(rooms);
 const activeUsers = {};
 
 const create_UUID = () => {
@@ -98,23 +92,50 @@ const leaveRoom = (socket, socketRoom) => {
     socket.leave(socketRoom);
 };
 
-const getRoomDetails = (roomName, restart) => {
-    const room = rooms.find(room => room.name === roomName);
-    const users = room.users.map(userName => (activeUsers[userName]));
-    if (restart) {
-        rooms = rooms.map(_room => ({
-            ..._room,
-            userVotes: _room.name === room.name ? {} : _room.userVotes
-        }))
-    }
-    return {
-        ...room,
-        users
-    }
+const leaveRoom2 = (socket, currentUser) => {
+    database.ref(`/rooms/${currentUser.room}/users/${currentUser.id}`).remove();
+    database.ref(`/rooms/${currentUser.room}`).once('value', (room) => {
+        const currentRoom = room.val();
+        if (currentRoom.adminUser === currentUser.id) {
+            if (currentRoom.users) {
+                const newUserid = Object.keys(currentRoom.users)[0];
+                database.ref(`/rooms/${currentUser.room}/adminUser`).set(newUserid);
+            } else {
+                database.ref(`/rooms/${currentUser.room}/adminUser`).remove();
+            }
+        }
+        socket.leave(currentUser.room);
+    });
 };
 
-io.on('connection', socket => {
+const getRoomDetails = async (roomName, restart) => {
+    return await database.ref(`/rooms/${roomName}`).once('value', async (room)  => {
+        return await database.ref(`/users`).once('value', async (users)  => {
+            const allUsers = await users.val();
+            const roomRef = await room.val();
+            const a = await Object.keys(roomRef.users).map(userId => allUsers[userId]);
+            return await {
+                ...roomRef,
+                users: a
+            };
+        })
+    });
+    // const room = rooms.find(room => room.name === roomName);
+    // const users = room.users.map(userName => (activeUsers[userName]));
+    // if (restart) {
+    //     rooms = rooms.map(_room => ({
+    //         ..._room,
+    //         userVotes: _room.name === room.name ? {} : _room.userVotes
+    //     }))
+    // }
+    // return {
+    //     ...room,
+    //     users
+    // }
+};
 
+
+io.on('connection', socket => {
     // socket.emit('rooms', io.sockets.adapter.rooms)
     socket.on('hello', (data) => {
         console.log(data);
@@ -122,13 +143,19 @@ io.on('connection', socket => {
 
     socket.on('disconnect', () => {
         io.emit("user-disconnected", socket.userName);
-        if (activeUsers[socket.userName] && activeUsers[socket.userName].room) {
-            leaveRoom(socket, activeUsers[socket.userName].room);
-            io.emit('send-rooms', rooms);
-        }
-        delete activeUsers[socket.userName];
+
+        database.ref(`/users/${socket.userName}`).once('value', (user) => {
+            const currentUser = user.val();
+
+            if (currentUser && currentUser.room) {
+                leaveRoom2(socket, currentUser);
+            }
+
+            database.ref(`/users/${socket.userName}`).remove();
+        });
     });
 
+    // TODO: NO used
     socket.on("send-message", function (data) {
         console.log(data);
         io.emit("send-message", data);
@@ -139,32 +166,46 @@ io.on('connection', socket => {
 
     socket.on('new-user', function (data) {
         socket.userName = create_UUID();
-        activeUsers[socket.userName] = {
+        database.ref(`/users`).update({ [socket.userName]: {
             id: socket.userName,
-            userName: data,
+            name: data,
             room: null
-        };
-        socket.emit('me', activeUsers[socket.userName]);
+        }});
+        database.ref(`/users/${socket.userName}`).once('value', (user) => {
+            const currentUser = user.val();
+            // console.log(user.val());
+            socket.emit('me', currentUser);
+        });
+
+        // activeUsers[socket.userName] = {
+        //     id: socket.userName,
+        //     userName: data,
+        //     room: null
+        // };
     });
 
-    socket.on('update-user', function (data) {
-        activeUsers[socket.userName] = {
-            ...activeUsers[socket.userName],
-            userName: data,
-            room: null
-        };
-        io.emit('me', activeUsers[socket.userName]);
+    socket.on('update-user', function (name) {
+        database.ref(`/users/${socket.userName}/name`).set(name);
+        database.ref(`/users/${socket.userName}`).once('value', user => {
+            io.emit('me', user);
+        });
     });
 
     socket.on("get-rooms", function () {
-        io.emit("send-rooms", rooms);
+        database.ref(`/rooms`).once('value', rooms => {
+            io.emit("send-rooms", rooms);
+        });
     });
 
-    socket.on("get-room", function (roomName) {
-        const response = getRoomDetails(roomName);
-        io.emit("send-room", response);
+    // TODO:
+    socket.on("get-room", async function (roomName) {
+        const response = await getRoomDetails(roomName);
+        // TODO: Fix this, not return data (return promise)
+        console.log(response);
+        io.sockets.in(roomName).emit("send-room", response);
     });
 
+    // TODO:
     socket.on("start-voting", function (roomName) {
         const response = getRoomDetails(roomName, true);
 
@@ -180,6 +221,7 @@ io.on('connection', socket => {
         io.sockets.in(roomName).emit('voting-started', room);
     });
 
+    // TODO:
     socket.on("end-voting", function (roomName) {
         const response = getRoomDetails(roomName);
 
@@ -192,6 +234,8 @@ io.on('connection', socket => {
 
         io.sockets.in(roomName).emit('voting-ended', room);
     });
+
+    // TODO:
     socket.on("vote", function (points) {
         const roomName = activeUsers[socket.userName].room
         const response = getRoomDetails(roomName);
@@ -229,22 +273,27 @@ io.on('connection', socket => {
     // });
 
     socket.on("join-room", function (data) {
-        if (activeUsers[socket.userName] && activeUsers[socket.userName].room) {
-            leaveRoom(socket, activeUsers[socket.userName].room);
-        }
-        // socket.userName = socket.userName;
-        activeUsers[socket.userName] = {
-            ...activeUsers[socket.userName],
-            // userName: data.userName,
-            room: data.roomName
-        }
-        socket.join(data.roomName);
-        rooms = rooms.map(room => ({
-            ...room,
-            userAdmin: room.userAdmin ? room.userAdmin : (room.name === data.roomName) ? socket.userName : null,
-            users: (room.name === data.roomName && !room.users.find(user => user === socket.userName)) ? [...room.users, socket.userName] : room.users
-        }));
-        io.emit('send-rooms', rooms);
+        database.ref(`/users/${socket.userName}`).once('value', (user) => {
+            const currentUser = user.val();
+
+            if (currentUser.room) {
+                leaveRoom2(socket);
+            }
+            socket.join(data.roomId);
+            database.ref(`/users/${currentUser.id}`).update({ 'room': data.roomId });
+            database.ref(`/rooms/${data.roomId}/users`).update({ [socket.userName]: socket.userName });
+
+            database.ref(`/rooms/${data.roomId}`).once('value', (room) => {
+                const currentRoom = room.val();
+                if (currentRoom && !currentRoom.adminUser) {
+                    database.ref(`/rooms/${data.roomId}/adminUser`).set(socket.userName);
+                }
+
+                database.ref(`/rooms`).once('value', rooms => {
+                    io.emit('send-rooms', rooms.val());
+                });
+            });
+        });
     });
 
 

@@ -7,6 +7,8 @@
     "start-dev": "nodemon index.js"
   },
   "dependencies": {
+    "firebase": "^7.24.0",
+    "firebase-admin": "^9.2.0",
     "nodemon": "^2.0.4",
     "socket.io": "^2.3.0"
   }
