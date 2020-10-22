@@ -36,12 +36,50 @@ var database = firebase.database();
 // })
 
 
+const cards = [
+    {
+        label: '1/2',
+        points: 0.5,
+        type: 'type-3'
+    },
+    {
+        label: '1',
+        points: 1,
+        type: 'type-1'
+    },
+    {
+        label: '2',
+        points: 2,
+        type: 'type-2'
+    },
+    {
+        label: '3',
+        points: 3,
+        type: 'type-3'
+    },
+    {
+        label: '5',
+        points: 5,
+        type: 'type-1'
+    },
+    {
+        label: '8',
+        points: 8,
+        type: 'type-2'
+    },
+    {
+        label: '10',
+        points: 10,
+        type: 'type-3'
+    }
+];
 
 
 const initRoomData = {
     users: [],
     userAdmin: null,
-    userVotes: {}
+    userVotes: {},
+    status: 'ready-to-vote',
 };
 
 let rooms = {
@@ -62,7 +100,11 @@ let rooms = {
     }
 };
 
-// database.ref('/rooms').set(rooms);
+database.ref('/rooms').set(rooms);
+database.ref('/users').set(null);
+database.ref('/cards').set(cards);
+
+
 const activeUsers = {};
 
 const create_UUID = () => {
@@ -94,7 +136,7 @@ const leaveRoom = (socket, socketRoom) => {
 
 const leaveRoom2 = (socket, currentUser) => {
     database.ref(`/rooms/${currentUser.room}/users/${currentUser.id}`).remove();
-    database.ref(`/rooms/${currentUser.room}`).once('value', (room) => {
+    database.ref(`/rooms/${currentUser.room}`).once('value', async (room) => {
         const currentRoom = room.val();
         if (currentRoom.adminUser === currentUser.id) {
             if (currentRoom.users) {
@@ -102,24 +144,36 @@ const leaveRoom2 = (socket, currentUser) => {
                 database.ref(`/rooms/${currentUser.room}/adminUser`).set(newUserid);
             } else {
                 database.ref(`/rooms/${currentUser.room}/adminUser`).remove();
+                database.ref(`/rooms/${currentUser.room}/status`).set('ready-to-start')
             }
         }
         socket.leave(currentUser.room);
+        const response = await getRoomDetails(currentUser.room);
+        const cardsRef = (await database.ref(`/cards`).once('value', _cards => _cards.val())).val();
+        console.log(cardsRef);
+        io.sockets.in(currentUser.room).emit("send-room", response, cardsRef);
     });
 };
 
+const getRooms = async (roomName) => {
+    return await database.ref(`/rooms/${roomName}`).once('value', async room => await room.val());
+};
+
+const getUsers = async () => {
+    return await database.ref(`/users`).once('value', async users => await users.val());
+};
+
 const getRoomDetails = async (roomName, restart) => {
-    return await database.ref(`/rooms/${roomName}`).once('value', async (room)  => {
-        return await database.ref(`/users`).once('value', async (users)  => {
-            const allUsers = await users.val();
-            const roomRef = await room.val();
-            const a = await Object.keys(roomRef.users).map(userId => allUsers[userId]);
-            return await {
-                ...roomRef,
-                users: a
-            };
-        })
-    });
+    const roomRef = await (await getRooms(roomName)).val();
+    const allUsers = await (await getUsers()).val();
+
+    const users = roomRef.users ? Object.keys(roomRef.users).map(userId => allUsers[userId]) : [];
+    const res = {
+        ...roomRef,
+        users
+    };
+    return res;
+
     // const room = rooms.find(room => room.name === roomName);
     // const users = room.users.map(userName => (activeUsers[userName]));
     // if (restart) {
@@ -134,12 +188,15 @@ const getRoomDetails = async (roomName, restart) => {
     // }
 };
 
+const sendRooms = () => {
+    database.ref(`/rooms`).once('value', rooms => {
+        io.emit("send-rooms", rooms);
+    });
+}
+
 
 io.on('connection', socket => {
     // socket.emit('rooms', io.sockets.adapter.rooms)
-    socket.on('hello', (data) => {
-        console.log(data);
-    });
 
     socket.on('disconnect', () => {
         io.emit("user-disconnected", socket.userName);
@@ -163,7 +220,6 @@ io.on('connection', socket => {
 
 
     // ScrumPoker api
-
     socket.on('new-user', function (data) {
         socket.userName = create_UUID();
         database.ref(`/users`).update({ [socket.userName]: {
@@ -192,73 +248,53 @@ io.on('connection', socket => {
     });
 
     socket.on("get-rooms", function () {
-        database.ref(`/rooms`).once('value', rooms => {
-            io.emit("send-rooms", rooms);
-        });
+        sendRooms();
     });
 
-    // TODO:
     socket.on("get-room", async function (roomName) {
+        console.log('get-room');
         const response = await getRoomDetails(roomName);
-        // TODO: Fix this, not return data (return promise)
-        console.log(response);
-        io.sockets.in(roomName).emit("send-room", response);
+        const cardsRef = (await database.ref(`/cards`).once('value', _cards => _cards.val())).val();
+
+        io.sockets.in(roomName).emit("send-room", response, cardsRef);
     });
 
     // TODO:
-    socket.on("start-voting", function (roomName) {
-        const response = getRoomDetails(roomName, true);
-
-        const room = {
-            ...response,
-            isVoting: true,
-            userVotes: {}
-        };
-
-
-        // const users = room.users.map(userName => (activeUsers[userName]));
+    socket.on("start-voting", async function (roomName) {
+        console.log('start-voting');
+        database.ref(`/rooms/${roomName}/status`).set('voting');
+        const room = await getRoomDetails(roomName, true);
 
         io.sockets.in(roomName).emit('voting-started', room);
+        sendRooms();
     });
 
     // TODO:
-    socket.on("end-voting", function (roomName) {
-        const response = getRoomDetails(roomName);
-
-        const room = {
-            ...response,
-            isVoting: false
-        };
-
-        // const users = room.users.map(userName => (activeUsers[userName]));
+    socket.on("end-voting", async function (roomName) {
+        console.log('end-voting');
+        const room = await getRoomDetails(roomName);
 
         io.sockets.in(roomName).emit('voting-ended', room);
     });
 
     // TODO:
-    socket.on("vote", function (points) {
-        const roomName = activeUsers[socket.userName].room
-        const response = getRoomDetails(roomName);
+    socket.on("vote", async function (points) {
+        console.log('vote');
+        const currentUser = (await database.ref(`users/${socket.userName}`).once('value', user => user.val())).val();
+        const roomName = currentUser.room;
 
-        const roomInfo = {
-            ...response,
-            userVotes: {
-                ...response.userVotes,
-                [socket.userName]: points
-            }
-        };
+        database.ref(`/rooms/${roomName}/userVotes/${currentUser.id}`).set(points);
 
-        // Todo: function to save rooms info
-        rooms = rooms.map(room => ({
-            ...room,
-            userVotes: room.name === roomName ? roomInfo.userVotes : room.userVotes
-        }));
+        let response = await getRoomDetails(roomName);
 
-        // const users = room.users.map(userName => (activeUsers[userName]));
+        io.sockets.in(roomName).emit('votes', response);
 
-        io.sockets.in(roomName).emit('votes', roomInfo.userVotes);
-        if (Object.keys(roomInfo.userVotes).length === roomInfo.users.length) {
-            io.sockets.in(roomName).emit('voting-ended', roomInfo);
+        if (Object.keys(response.userVotes).length === response.users.length) {
+            database.ref(`/rooms/${roomName}/status`).set('voted');
+            const room = await getRoomDetails(roomName);
+            database.ref(`/votes/${roomName}`).push(room.userVotes);
+
+            io.sockets.in(roomName).emit('voting-ended', room);
         }
     });
 
@@ -272,28 +308,27 @@ io.on('connection', socket => {
     //     io.sockets.in(roomName).emit("send-users-in-room", users);
     // });
 
-    socket.on("join-room", function (data) {
-        database.ref(`/users/${socket.userName}`).once('value', (user) => {
-            const currentUser = user.val();
+    socket.on('join-room', async function (data) {
+        console.log('join-room');
+        const currentUser = await (await database.ref(`/users/${socket.userName}`).once('value', (user) => user.val())).val();
 
-            if (currentUser.room) {
-                leaveRoom2(socket);
-            }
-            socket.join(data.roomId);
-            database.ref(`/users/${currentUser.id}`).update({ 'room': data.roomId });
-            database.ref(`/rooms/${data.roomId}/users`).update({ [socket.userName]: socket.userName });
+        if (currentUser.room) {
+            leaveRoom2(socket);
+        }
+        socket.join(data.roomId);
+        database.ref(`/users/${currentUser.id}`).update({ room: data.roomId });
+        database.ref(`/rooms/${data.roomId}/users`).update({ [socket.userName]: socket.userName });
 
-            database.ref(`/rooms/${data.roomId}`).once('value', (room) => {
-                const currentRoom = room.val();
-                if (currentRoom && !currentRoom.adminUser) {
-                    database.ref(`/rooms/${data.roomId}/adminUser`).set(socket.userName);
-                }
+        const currentRoom = await (await database.ref(`/rooms/${data.roomId}`).once('value', (room) => room.val())).val();
 
-                database.ref(`/rooms`).once('value', rooms => {
-                    io.emit('send-rooms', rooms.val());
-                });
-            });
-        });
+        if (currentRoom && !currentRoom.adminUser) {
+            database.ref(`/rooms/${data.roomId}/adminUser`).set(socket.userName);
+        }
+
+        sendRooms();
+
+        socket.emit('room-joined', currentRoom);
+        console.log('room-joined');
     });
 
 
