@@ -2,11 +2,13 @@
   "name": "scrumpoker-api",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "start-dev": "nodemon index.js"
   },
   "dependencies": {
+    "date-fns": "^2.16.1",
     "firebase": "^7.24.0",
     "firebase-admin": "^9.2.0",
     "nodemon": "^2.0.4",
