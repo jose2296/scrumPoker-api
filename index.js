@@ -297,6 +297,17 @@ io.on('connection', socket => {
     });
 
     // TODO:
+    socket.on('clear-voting', async function (roomName) {
+        console.log('clear-voting', roomName);
+        database.ref(`/rooms/${roomName}/status`).set('ready-to-vote');
+        database.ref(`/rooms/${roomName}/userVotes`).remove();
+        const room = await getRoomDetails(roomName, true);
+
+        sendRooms();
+        io.sockets.in(roomName).emit('voting-cleared', room);
+    });
+
+    // TODO:
     socket.on('end-voting', async function (roomName) {
         console.log('end-voting');
         database.ref(`/rooms/${roomName}/status`).set('voted')
