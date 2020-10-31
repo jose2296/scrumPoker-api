@@ -81,26 +81,26 @@ const cards = [
         points: 13,
         type: 'type-8'
     },
-    // {
-    //     label: '16',
-    //     points: 16,
-    //     type: 'type-7'
-    // },
-    // {
-    //     label: '20',
-    //     points: 20,
-    //     type: 'type-7'
-    // },
-    // {
-    //     label: '20',
-    //     points: 20,
-    //     type: 'type-7'
-    // },
-    // {
-    //     label: '30',
-    //     points: 30,
-    //     type: 'type-7'
-    // }
+    {
+        label: '16',
+        points: 16,
+        type: 'type-7'
+    },
+    {
+        label: '20',
+        points: 20,
+        type: 'type-7'
+    },
+    {
+        label: '20',
+        points: 20,
+        type: 'type-7'
+    },
+    {
+        label: '30',
+        points: 30,
+        type: 'type-7'
+    }
 ];
 
 
@@ -133,36 +133,6 @@ database.ref('/rooms').set(rooms);
 database.ref('/cards').set(cards);
 // database.ref('/users').set(null);
 
-
-const activeUsers = {};
-
-const create_UUID = () => {
-    var dt = new Date().getTime();
-    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-        var r = (dt + Math.random()*16)%16 | 0;
-        dt = Math.floor(dt/16);
-        return (c=='x' ? r :(r&0x3|0x8)).toString(16);
-    });
-    return uuid;
-}
-
-const leaveRoom = (socket, socketRoom) => {
-    rooms = rooms.map(room => {
-        let users = room.users;
-        if (room.name === socketRoom) {
-            users = room.users.filter(user => user !== socket.userId);
-        }
-
-        delete room.userVotes[socket.userId];
-        return {
-            ...room,
-            users,
-            userAdmin: users.length ? room.userAdmin : null
-        }
-    });
-    socket.leave(socketRoom);
-};
-
 const leaveRoom2 = (socket, currentUser) => {
     database.ref(`/rooms/${currentUser.room}/users/${currentUser.id}`).remove();
     database.ref(`/rooms/${currentUser.room}`).once('value', async (room) => {
@@ -174,6 +144,7 @@ const leaveRoom2 = (socket, currentUser) => {
             } else {
                 database.ref(`/rooms/${currentUser.room}/adminUser`).remove();
                 database.ref(`/rooms/${currentUser.room}/status`).set('ready-to-vote')
+                database.ref(`/rooms/${currentUser.room}/userVotes`).remove()
             }
         }
         database.ref(`/users/${currentUser.id}/room`).remove();
@@ -208,20 +179,8 @@ const getRoomDetails = async (roomName, restart) => {
         ...roomRef,
         users
     };
-    return res;
 
-    // const room = rooms.find(room => room.name === roomName);
-    // const users = room.users.map(userName => (activeUsers[userName]));
-    // if (restart) {
-    //     rooms = rooms.map(_room => ({
-    //         ..._room,
-    //         userVotes: _room.name === room.name ? {} : _room.userVotes
-    //     }))
-    // }
-    // return {
-    //     ...room,
-    //     users
-    // }
+    return res;
 };
 
 const sendRooms = () => {
@@ -312,9 +271,11 @@ io.on('connection', socket => {
         console.log('end-voting');
         database.ref(`/rooms/${roomName}/status`).set('voted')
         const room = await getRoomDetails(roomName);
-        const date = format(new Date(), 'yyyy-MM-dd hh:mm:ss')
 
-        database.ref(`/votes/${roomName}`).update({ [date]: room.userVotes});
+        if (room.userVotes) {
+            const date = format(new Date(), 'yyyy-MM-dd hh:mm:ss')
+            database.ref(`/votes/${roomName}`).update({ [date]: room.userVotes});
+        }
         io.sockets.in(roomName).emit('voting-ended', room);
     });
 
