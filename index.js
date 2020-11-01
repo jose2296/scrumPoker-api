@@ -334,6 +334,17 @@ io.on('connection', socket => {
         console.log('room-joined');
     });
 
+    socket.on('leave-room', async function (data) {
+        console.log('leave-room');
+        const currentUser = await (await database.ref(`/users/${socket.userId}`).once('value', (user) => user.val())).val();
+
+        if (currentUser.room) {
+            leaveRoom2(socket, currentUser);
+        }
+
+        sendRooms();
+    });
+
 
     // socket.on('join room', function (room) {
     //     socket.join(room);
